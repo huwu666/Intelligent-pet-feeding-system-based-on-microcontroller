@@ -1,0 +1,100 @@
+#include <WiFi.h>
+#include <PubSubClient.h>
+#include <ArduinoJson.h>
+
+// —— WiFi 配置 —— 
+const char* ssid         = "FAST_C377";
+const char* passwordWiFi = "201d201d";
+
+// —— MQTT 配置 —— 
+const char* mqttServer   = "sh-3-mqtt.iot-api.com";  // 平台 MQTT 地址
+const int   mqttPort     = 1883;                     // 平台 MQTT 端口
+
+// —— 认证凭据 ——
+// ⚠️ 把下面三个都替换成你在 ThingsCloud 控制台看到的 “设备访问令牌”
+// 如果项目 Key 可选，可以留空 ""。
+const char* username     = "0h1n33917c0myacc";
+const char* passwordMQTT = "3hbYFc6lJb";                   // 如果项目 Key 可选就留空
+const char* clientId     = "f2a74ff878df4604b067abd1a3039805";
+
+WiFiClient   espClient;
+PubSubClient mqttClient(espClient);
+
+unsigned long lastReport = 0;
+// 报告间隔改为 40 秒
+const unsigned long reportInterval = 40UL * 1000UL;
+
+void connectWiFi() {
+  Serial.print("➤ WiFi Connecting to ");
+  Serial.print(ssid);
+  Serial.println(" ...");
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(ssid, passwordWiFi);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print('.');
+  }
+  Serial.println();
+  Serial.print("✓ WiFi connected, IP: ");
+  Serial.println(WiFi.localIP());
+}
+
+void connectMQTT() {
+  mqttClient.setServer(mqttServer, mqttPort);
+  mqttClient.setKeepAlive(60);
+
+  Serial.println("➤ MQTT Credentials:");
+  Serial.print("    Host:     "); Serial.print(mqttServer); Serial.print(":"); Serial.println(mqttPort);
+  Serial.print("    ClientId: "); Serial.println(clientId);
+  Serial.print("    Username: "); Serial.println(username);
+  Serial.print("    Password: "); Serial.println(passwordMQTT[0] ? passwordMQTT : "(empty)");
+  Serial.println("➤ MQTT Connecting ...");
+
+  while (!mqttClient.connected()) {
+    bool ok = mqttClient.connect(clientId, username, passwordMQTT);
+    if (ok) {
+      Serial.println("✓ MQTT connected");
+    } else {
+      Serial.printf("✗ MQTT failed, rc=%d. Retry in 5s\n", mqttClient.state());
+      delay(5000);
+    }
+  }
+}
+
+void setup() {
+  Serial.begin(115200);
+  delay(100);
+  connectWiFi();
+  connectMQTT();
+}
+
+void loop() {
+  if (!mqttClient.connected()) {
+    connectMQTT();
+  }
+  mqttClient.loop();
+
+  if (millis() - lastReport >= reportInterval) {
+    lastReport = millis();
+
+    // —— 随机/手动编一组属性数据 —— 
+    float t = 24.3;
+    float h = 51.7;
+
+    // 构建 JSON
+    StaticJsonDocument<128> doc;
+    doc["temperature"] = t;
+    doc["humidity"]    = h;
+    char payload[128];
+    serializeJson(doc, payload);
+
+    // 发布到 attributes 主题
+    Serial.print("➤ Publishing to 'attributes' → ");
+    Serial.println(payload);
+    if (mqttClient.publish("attributes", payload)) {
+      Serial.println("✓ Publish OK");
+    } else {
+      Serial.println("✗ Publish failed");
+    }
+  }
+}
